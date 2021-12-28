@@ -9,7 +9,7 @@ pub trait VersionControlSystem {
      * Since "associated type defaults are unstable" (see https://github.com/rust-lang/rust/issues/29661),
      * we can not define a type like at the end of this comment, without using nightly rust. Therefore,
      * we ignore type_complexity.
-     * 
+     *
      * type BranchHeadVector = Vec<(Self::BranchId, Self::RevisionId)>;
      */
     #[allow(clippy::type_complexity)]
@@ -40,13 +40,11 @@ impl VersionControlSystem for Git {
     fn heads(&self) -> Result<Vec<(Self::BranchId, Self::RevisionId)>, Error> {
         let mut remote = Remote::create_detached(&self.url)?;
         remote.connect(Direction::Fetch)?;
-        let remote_heads = remote.list()?;
-        let mut remotes_list = Vec::new();
 
-        for head in remote_heads {
-            remotes_list.push((head.name().to_string(), head.oid()));
-        }
-
-        Ok(remotes_list)
+        Ok(remote
+            .list()?
+            .iter()
+            .map(|head| (head.name().to_string(), head.oid()))
+            .collect())
     }
 }
