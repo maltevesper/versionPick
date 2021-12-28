@@ -1,0 +1,10 @@
+[package]
+name = "version_pick"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Malte Vesper <malte.vesper@gmx.net>" ]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+git2 = "^0.13.25"
+failure = "^0.1.8"
