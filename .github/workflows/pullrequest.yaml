@@ -20,8 +20,6 @@ jobs:
         with:
           command: install
           args: cargo-binutils
-      - name: install gcovr
-        run: pip install gcovr
       - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
@@ -35,34 +33,79 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --tests --all-features --no-fail-fast
+          args: --all-features --no-fail-fast
         env:
           CARGO_INCREMENTAL: '0'
           RUSTFLAGS: '-Z instrument-coverage'
-          LLVM_PROFILE_FILE: 'test-%m.profraw'
-      - name: generate coverage
-        run: cargo profdata -- merge -sparse test-*.profraw -o test.profdata
-        # uses: actions-rs/cargo@v1
-        # with:
-        #   command: profdata 
-        #   args: -- merge -sparse test-*.profraw -o test.profdata
-      - name: check coverage
+          RUSTDOCFLAGS: '-Z instrument-coverage -Z unstable-options --persist-doctests target/debug/doctestbins'
+          LLVM_PROFILE_FILE: 'coverage/test-%m.profraw'
+      - name: merge coverage data
+        run: cargo profdata -- merge -sparse coverage/test-*.profraw -o coverage/test.profdata
+        #can not use actions-rs/cargo since the wildcard in test-*.profraw will not be expanded
+      - name: list executables to cover
+        id: executableList
+        shell: bash
+        run: |
+          EXECUTABLES=""
+          for file in \
+            $( \
+              cargo test --no-run --message-format=json \
+                | jq -r "select(.profile.test == true) | .filenames[]" \
+                | grep -v dSYM - \
+            ) \
+            target/debug/doctestbins/*/rust_out
+          do
+            [[ -x $file ]] && EXECUTABLES+="$file "
+          done
+
+          if [[ -z "${EXECUTABLES// }" ]]; then
+            echo "Failed to find coverage executables"
+            exit 1
+          fi
+
+          echo "Executables: ${EXECUTABLES}"
+          echo "::set-output name=coverage_executables::${EXECUTABLES}"
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTFLAGS: '-Z instrument-coverage'
+          RUSTDOCFLAGS: '-Z instrument-coverage -Z unstable-options --persist-doctests target/debug/doctestbins'
+          LLVM_PROFILE_FILE: 'coverage/test-%m.profraw'
+      - name: report coverage
         shell: bash
         run: |
           set -euo pipefail
           LINE_COVERAGE_FAIL=2
           BRANCH_COVERAGE_FAIL=4
-          mkdir -p coverage/html
-          gcovr --gcov-executable="llvm-cov gcov" --print-summary --fail-under-line 100 --fail-under-branch 100 --html-details coverage/html/ --txt || GCOVR_RESULT=$?
-          if [[ 0 -ne $(( GCOVR_RESULT & ( $LINE_COVERAGE_FAIL | $BRANCH_COVERAGE_FAIL ) )) ]]; then
-            echo "::error ::Coverage to low"
-          elif [[ 0 -eq $GCOVR_RESULT ]]; then
+          EXECUTABLES="${{ steps.executableList.outputs.coverage_executables }}"
+
+          if [[ -z "${EXECUTABLES// }" ]]; then
+            echo "No coverage executables provided."
+            exit 1
+          fi
+
+          OBJECT_ARGS=$(printf " --object %s" ${EXECUTABLES})
+          cargo cov -- show   --ignore-filename-regex='[\\/]\.cargo[\\/]registry' --instr-profile coverage/test.profdata ${OBJECT_ARGS} --output-dir=coverage/html --format=html
+          cargo cov -- report --ignore-filename-regex='[\\/]\.cargo[\\/]registry' --instr-profile coverage/test.profdata ${OBJECT_ARGS} \
+          | awk '\
+            /^TOTAL/ { \
+              print; \
+              if($4 != "100%") { \
+                printf "Coverage %s below 100%. Failing\n", $4; \
+                exit 2 \
+              } else { \
+                printf "Coverage %s is 100%. OK.\n", $4 \
+              } \
+            }; \
+            { print }' \
+          || COVERAGE_RESULT=$?
+
+          if [[ "${COVERAGE_RESULT}" -eq 0 ]]; then
             echo "::info ::Code Coverage check passed."
           else
-            echo "::error ::Error while executing gcovr. got returncode $GCOVR_RESULT"
+            echo "::error ::Coverage to low"
           fi
-          exit $GCOVR_RESULT
-      - name: Export gcovr html report
+          exit $COVERAGE_RESULT
+      - name: Export html report
         uses: actions/upload-artifact@v2
         if: ${{ !cancelled() }}
         with:
