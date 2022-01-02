@@ -1,6 +1,6 @@
 on: [push, pull_request]
 
-name: Code Coverage
+name: Continious integration
 
 jobs:
 
@@ -14,7 +14,14 @@ jobs:
         with:
           toolchain: nightly
           override: true
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
+      - name: install cargo binutils
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-binutils
+      - name: install gcovr
+        run: pip install gcovr
       - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
@@ -28,10 +35,37 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --all-features --no-fail-fast
+          args: --tests --all-features --no-fail-fast
         env:
           CARGO_INCREMENTAL: '0'
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+          RUSTFLAGS: '-Z instrument-coverage'
+          LLVM_PROFILE_FILE: 'test-%m.profraw'
       - name: generate coverage
-        uses: actions-rs/grcov@v0.1
+        run: cargo profdata -- merge -sparse test-*.profraw -o test.profdata
+        # uses: actions-rs/cargo@v1
+        # with:
+        #   command: profdata 
+        #   args: -- merge -sparse test-*.profraw -o test.profdata
+      - name: check coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINE_COVERAGE_FAIL=2
+          BRANCH_COVERAGE_FAIL=4
+          mkdir -p coverage/html
+          gcovr --gcov-executable="llvm-cov gcov" --print-summary --fail-under-line 100 --fail-under-branch 100 --html-details coverage/html/ --txt || GCOVR_RESULT=$?
+          if [[ 0 -ne $(( GCOVR_RESULT & ( $LINE_COVERAGE_FAIL | $BRANCH_COVERAGE_FAIL ) )) ]]; then
+            echo "::error ::Coverage to low"
+          elif [[ 0 -eq $GCOVR_RESULT ]]; then
+            echo "::info ::Code Coverage check passed."
+          else
+            echo "::error ::Error while executing gcovr. got returncode $GCOVR_RESULT"
+          fi
+          exit $GCOVR_RESULT
+      - name: Export gcovr html report
+        uses: actions/upload-artifact@v2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage report
+          path: coverage/html/
+          if-no-files-found: error
