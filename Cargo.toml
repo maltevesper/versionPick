@@ -8,3 +8,7 @@ authors = [ "Malte Vesper <malte.vesper@gmx.net>" ]
 [dependencies]
 git2 = "^0.13.25"
 failure = "^0.1.8"
+
+[dev-dependencies]
+cmd_lib = "1.3.0"
+mktemp = "0.4.1"

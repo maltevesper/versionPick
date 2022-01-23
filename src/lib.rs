@@ -48,3 +48,43 @@ impl VersionControlSystem for Git {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cmd_lib::run_fun;
+    use mktemp::Temp;
+    use std::io::Error;
+
+    #[test]
+    fn test_heads() -> Result<(), Error> {
+        let temp_dir = Temp::new_dir()?;
+        let temp_path = temp_dir.to_str().unwrap();
+        println!(
+            "{:?}",
+            run_fun! (
+                cd ${temp_path};
+                git init --initial-branch=main;
+                git commit --allow-empty -m "commit 1";
+                git commit --allow-empty -m "commit 2";
+                git switch -c feature/branch;
+                git commit --allow-empty -m "feature commit";
+                git log --all --decorate --oneline;
+            )?
+        );
+        let heads = ["HEAD", "refs/heads/feature/branch", "refs/heads/main"]
+            .into_iter()
+            .map(|revision: &str| {
+                (
+                    revision,
+                    Oid::from_str(&run_fun! (cd ${temp_path}; git rev-parse ${revision}).unwrap())
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .sort();
+        let git = Git::from_url(temp_path);
+        assert_eq!(git.heads().unwrap().sort(), heads);
+        Ok(())
+    }
+}
