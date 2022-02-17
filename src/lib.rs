@@ -1,3 +1,4 @@
+use fail::fail_point;
 use failure::Error;
 use git2::{Direction, Oid, Remote};
 
@@ -30,7 +31,7 @@ impl Git {
 
 impl VersionControlSystem for Git {
     type RevisionId = Oid;
-    type BranchId = String;
+    type BranchId = String; //TODO: can we change the code to use &str?
 
     /**
      * See https://github.com/rust-lang/rust/issues/29661 -> we can not typedef based on trait types inside a trait.
@@ -38,6 +39,9 @@ impl VersionControlSystem for Git {
      */
     #[allow(clippy::type_complexity)]
     fn heads(&self) -> Result<Vec<(Self::BranchId, Self::RevisionId)>, Error> {
+        fail_point!("git.heads.create_detached", |_| {
+            Err(git2::Error::from_str("Injected create_detach error.").into())
+        });
         let mut remote = Remote::create_detached(&self.url)?;
         remote.connect(Direction::Fetch)?;
 
@@ -72,19 +76,21 @@ mod tests {
                 git log --all --decorate --oneline;
             )?
         );
-        let heads = ["HEAD", "refs/heads/feature/branch", "refs/heads/main"]
+        let mut heads = ["HEAD", "refs/heads/feature/branch", "refs/heads/main"]
             .into_iter()
             .map(|revision: &str| {
                 (
-                    revision,
+                    revision.to_string(),
                     Oid::from_str(&run_fun! (cd ${temp_path}; git rev-parse ${revision}).unwrap())
                         .unwrap(),
                 )
             })
-            .collect::<Vec<_>>()
-            .sort();
+            .collect::<Vec<_>>();
+        heads.sort();
         let git = Git::from_url(temp_path);
-        assert_eq!(git.heads().unwrap().sort(), heads);
+        let mut git_heads = git.heads().unwrap();
+        git_heads.sort();
+        assert_eq!(git_heads, heads);
         Ok(())
     }
 }
